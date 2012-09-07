@@ -1,3 +1,11 @@
+if (typeof Object.create !== 'function') {
+    Object.create = function (o) {    
+        var F = function (){};
+        F.prototype = o;
+        return new F();
+    };
+}
+
 var hoiio = {};
 
 hoiio.util = {
@@ -20,22 +28,59 @@ hoiio.util = {
             if (uses.hasOwnProperty(use)) {
                 obj[use] = function(use) {
                     return function(params, callback) {
-                        obj.client.execute(service, use, params, null);
+                        this.client.execute(service, use, params, null);
                     };
                 }(use);
             }
     },
 
-    createObj : function(client, service, uses) {
-        var obj = {client: client};
+    createObj : function(service, uses) {
+        var obj = {client: hoiio.clientObj};
         this.createFuncs(service, uses, obj);
         return obj;
     }
 };
 
+hoiio.clientObj = {
+        app_id : '',
+        access_token : '',
+        base_uri : "https://secure.hoiio.com/open",
+
+        getMethodURI : function() {
+            var str = Array.prototype.slice.call(arguments);
+            str.unshift(this.base_uri);
+            document.writeln(str);
+            return str.join("/");
+        },
+
+        request: function(uri, params, callback) {
+            var req = new XMLHttpRequest();
+
+            params.app_id = this.app_id;
+            params.access_token = this.access_token;
+
+            req.open('POST', uri, true);
+            req.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+
+            if (callback) {
+                req.onreadystatechange = callback(req);
+            }
+
+            document.writeln(uri);
+            document.writeln(hoiio.util.serialize(params));
+            req.send(hoiio.util.serialize(params));
+        },
+
+        execute: function(service, use, params, callback) {
+            var methodUri = this.getMethodURI(service, use);
+            this.request(methodUri, params, callback);
+        }
+};
+
 hoiio.client = function(app_id, access_token) {
     // Create other services constructor
     var i;
+    var retCli;
     var serv;
     var services = {
         account : {
@@ -72,7 +117,7 @@ hoiio.client = function(app_id, access_token) {
             getStatus        : "query_status"
             },
 
-        ivr     : {            
+        ivr     : {
             dial             : "start/dial",
             play             : "middle/play",
             gather           : "middle/gather",
@@ -84,47 +129,24 @@ hoiio.client = function(app_id, access_token) {
 
     for (serv in services)
         if (services.hasOwnProperty(serv)) {
-            this[serv] = function (service, uses) {
-                return function (client) {
-                    return this.util.createObj(client, service, uses);
-                };
-            }(serv, services[serv]);
-        }
+            this[serv + 'Obj'] = this.util.createObj(serv, services[serv]);
 
-    return {
-        app_id : app_id,
-        access_token : access_token,
-        base_uri : "https://secure.hoiio.com/open",
-        hoiio : this,
-
-        getMethodURI : function() {
-            var str = Array.prototype.slice.call(arguments);
-            str.unshift(this.base_uri);
-            document.writeln(str);
-            return str.join("/");
-        },
-
-        request: function(uri, params, callback) {
-            var req = new XMLHttpRequest();
-
-            params.app_id = this.app_id;
-            params.access_token = this.access_token;
-
-            req.open('POST', uri, true);
-            req.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-
-            if (callback) {
-                req.onreadystatechange = callback(req);
+            if (typeof this[serv] !== 'function') {
+                this[serv] = function(service) {
+                    // save the name of the service in the scope for
+                    // the inner function
+                    return function (client) {
+                        var obj = Object.create(this[service + 'Obj']);
+                        obj.client = client;
+                        return obj;
+                    };
+                }(serv);
             }
-
-            document.writeln(uri);
-            document.writeln(this.hoiio.util.serialize(params));
-            req.send(this.hoiio.util.serialize(params));
-        },
-
-        execute: function(service, use, params, callback) {
-            var methodUri = this.getMethodURI(service, use);
-            this.request(methodUri, params, callback);
         }
-    };
+
+    retCli = Object.create(this.clientObj);
+    retCli.app_id = app_id;
+    retCli.access_token = access_token;
+
+    return retCli;
 };
